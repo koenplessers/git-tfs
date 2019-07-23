@@ -6,6 +6,7 @@ using NDesk.Options;
 using GitTfs.Core;
 using GitTfs.Util;
 using GitTfs.Core.TfsInterop;
+using System.IO;
 
 namespace GitTfs.Commands
 {
@@ -202,6 +203,8 @@ namespace GitTfs.Commands
             public Exception Error { get; set; }
         }
 
+        private HashSet<string> BlacklistedBranches;
+
         private int CloneAll(string gitRemote)
         {
             if (CloneAllBranches && NoFetch)
@@ -245,7 +248,17 @@ namespace GitTfs.Commands
             }
             else
             {
-                return InitializeBranches(defaultRemote, childBranchesToInit) ? GitTfsExitCodes.OK : GitTfsExitCodes.SomeDataCouldNotHaveBeenRetrieved;
+                Trace.TraceInformation($"{childBranchesToInit.Count} branches found.");
+                string blackListFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "blacklistedbranches.txt");
+                if (File.Exists(blackListFile))
+                {
+                    BlacklistedBranches = new HashSet<string>(File.ReadAllLines(blackListFile).Select(l => l.ToLower()));
+                    Trace.TraceInformation($"Blacklisting {BlacklistedBranches.Count} branches.");
+                }
+                else
+                    BlacklistedBranches = new HashSet<string>();
+
+                return InitializeBranches(defaultRemote, childBranchesToInit.Where (b => ! BlacklistedBranches.Contains (b.TfsRepositoryPath.ToLower ()))) ? GitTfsExitCodes.OK : GitTfsExitCodes.SomeDataCouldNotHaveBeenRetrieved;
             }
 
             return GitTfsExitCodes.OK;
@@ -261,7 +274,7 @@ namespace GitTfs.Commands
             return rootBranch.GetAllChildrenOfBranch(defaultRemote.TfsRepositoryPath).Select(b => new BranchDatas { TfsRepositoryPath = b.Path }).ToList();
         }
 
-        private bool InitializeBranches(IGitTfsRemote defaultRemote, List<BranchDatas> childBranchPaths)
+        private bool InitializeBranches(IGitTfsRemote defaultRemote, IEnumerable<BranchDatas> childBranchPaths)
         {
             Trace.TraceInformation("Tfs branches found:");
             var branchesToProcess = new List<BranchDatas>();
@@ -285,6 +298,8 @@ namespace GitTfs.Commands
                 branchesToProcess.Add(branchDatas);
             }
             branchesToProcess.Add(new BranchDatas { TfsRepositoryPath = defaultRemote.TfsRepositoryPath, TfsRemote = defaultRemote, RootChangesetId = -1 });
+
+            int i = childBranchPaths.Count() + 1;
 
             bool isSomethingDone;
             do
@@ -330,6 +345,7 @@ namespace GitTfs.Commands
                             tfsBranch.Error = ex;
                         }
                     }
+                    Trace.TraceInformation($"{i--} branches remaining" );
                 }
             } while (branchesToProcess.Any(b => !b.IsEntirelyFetched && b.Error == null) && isSomethingDone);
 
