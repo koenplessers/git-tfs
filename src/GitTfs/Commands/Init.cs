@@ -30,6 +30,8 @@ namespace GitTfs.Commands
             _initOptions = initOptions;
         }
 
+        public string WorkspacePath => _initOptions.WorkspacePath;
+
         public OptionSet OptionSet
         {
             get { return _initOptions.OptionSet.Merge(_remoteOptions.OptionSet); }

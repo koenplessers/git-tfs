@@ -76,6 +76,22 @@ namespace GitTfs.Commands
                     {
                         retVal = _init.Run(tfsUrl, tfsRepositoryPath, gitRepositoryPath);
                     }
+
+                    // allow to change workspace path even on resume (normally done by the run of init
+                    if (!string.IsNullOrWhiteSpace(_init.WorkspacePath))
+                    {
+                        Trace.WriteLine("workspace path:" + _init.WorkspacePath);
+
+                        try
+                        {
+                            Directory.CreateDirectory(_init.WorkspacePath);
+                            _globals.Repository.SetConfig(GitTfsConstants.WorkspaceConfigKey, _init.WorkspacePath);
+                        }
+                        catch (Exception)
+                        {
+                            throw new GitTfsException("error: workspace path is invalid!");
+                        }
+                    }
                 }
 
                 VerifyTfsPathToClone(tfsRepositoryPath);
@@ -164,7 +180,7 @@ namespace GitTfs.Commands
                 return;
             try
             {
-                var remote = _globals.Repository.ReadTfsRemote(GitTfsConstants.DefaultRepositoryId);
+                var remote = _globals.Repository.ReadTfsRemote(_globals.RemoteId ?? GitTfsConstants.DefaultRepositoryId);
 
                 if (!remote.Tfs.IsExistingInTfs(tfsRepositoryPath))
                     throw new GitTfsException("error: the path " + tfsRepositoryPath + " you want to clone doesn't exist!")
