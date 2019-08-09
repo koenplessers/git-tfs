@@ -231,15 +231,21 @@ namespace GitTfs.Core
 
         public void CleanupWorkspaceDirectory()
         {
+            CleanupDirectory(WorkingDirectory, true);
+        }
+
+        public static void CleanupDirectory(string directory, bool trace = false)
+        {
             try
             {
-                if (Directory.Exists(WorkingDirectory))
+                Trace.WriteLine("Cleanup directory: " + directory);
+                if (Directory.Exists(directory))
                 {
-                    var allFiles = Directory.EnumerateFiles(WorkingDirectory, "*", SearchOption.AllDirectories);
+                    var allFiles = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories);
                     foreach (var file in allFiles)
                         File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
 
-                    Directory.Delete(WorkingDirectory, true);
+                    Directory.Delete(directory, true);
                 }
             }
             catch (Exception ex)
@@ -829,13 +835,33 @@ namespace GitTfs.Core
             return Apply(parent, changeset, BuildEntryDictionary(), ignorableErrorHandler);
         }
 
+        public Util.FileFilter Filters
+        {
+            get
+            {
+                if (m_Filters == null)
+                {
+                    m_Filters = new FileFilter ();
+                    string blackListFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "blacklistedfolders.txt");
+                    if (File.Exists(blackListFile))
+                        m_Filters.BlackListPaths = new List<string> (File.ReadAllLines(blackListFile).Select(l => (TfsRepositoryPath + '/' + l).ToLower()));
+                    string whiteListFile = Path.Combine (AppDomain.CurrentDomain.BaseDirectory, "whitelistedfolders.txt");
+                    if (File.Exists (whiteListFile))
+                        m_Filters.WhiteListPaths = new List<string> (File.ReadAllLines (whiteListFile).Select (l => (TfsRepositoryPath + '/' + l).ToLower ()));
+                }
+                return m_Filters;
+            }
+        }
+
+        private Util.FileFilter m_Filters = null;
+
         private LogEntry Apply(string parent, ITfsChangeset changeset, IDictionary<string, GitObject> entries, Action<Exception> ignorableErrorHandler)
         {
             LogEntry result = null;
             WithWorkspace(changeset.Summary, workspace =>
             {
                 var treeBuilder = workspace.Remote.Repository.GetTreeBuilder(parent);
-                result = changeset.Apply(parent, treeBuilder, workspace, entries, ignorableErrorHandler);
+                result = changeset.Apply(parent, treeBuilder, workspace, entries, ignorableErrorHandler, Filters);
                 result.Tree = treeBuilder.GetTree();
             });
             if (!string.IsNullOrEmpty(parent)) result.CommitParents.Add(parent);

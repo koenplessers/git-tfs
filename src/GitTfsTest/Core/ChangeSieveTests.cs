@@ -29,7 +29,7 @@ namespace GitTfs.Test.Core
             }
 
             private ChangeSieve _changeSieve;
-            public ChangeSieve Subject => _changeSieve ?? (_changeSieve = new ChangeSieve(Changeset, new PathResolver(Remote, "", InitialTree)));
+            public ChangeSieve Subject => _changeSieve ?? (_changeSieve = new ChangeSieve(Changeset, new PathResolver(Remote, "", InitialTree), null));
 
             private Dictionary<string, GitObject> _initialTree;
             public virtual Dictionary<string, GitObject> InitialTree => _initialTree ?? (_initialTree = new Dictionary<string, GitObject>(StringComparer.InvariantCultureIgnoreCase));

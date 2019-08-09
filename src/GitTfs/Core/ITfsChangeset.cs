@@ -7,7 +7,7 @@ namespace GitTfs.Core
     {
         TfsChangesetInfo Summary { get; }
         int BaseChangesetId { get; }
-        LogEntry Apply(string lastCommit, IGitTreeModifier treeBuilder, ITfsWorkspace workspace, IDictionary<string, GitObject> initialTree, Action<Exception> ignorableErrorHandler);
+        LogEntry Apply(string lastCommit, IGitTreeModifier treeBuilder, ITfsWorkspace workspace, IDictionary<string, GitObject> initialTree, Action<Exception> ignorableErrorHandler, Util.FileFilter filters);
         LogEntry CopyTree(IGitTreeModifier treeBuilder, ITfsWorkspace workspace);
 
         /// <summary>

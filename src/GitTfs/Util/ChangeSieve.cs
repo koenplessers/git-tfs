@@ -35,15 +35,19 @@ namespace GitTfs.Util
         private readonly PathResolver _resolver;
         private readonly IEnumerable<NamedChange> _namedChanges;
 
-        public ChangeSieve(IChangeset changeset, PathResolver resolver)
+        public ChangeSieve(IChangeset changeset, PathResolver resolver, FileFilter filters)
         {
             _resolver = resolver;
 
-            _namedChanges = changeset.Changes.Select(c => new NamedChange
+            var filteredChanges = changeset.Changes.Where (cs => filters == null || filters.IncludeItem (cs));
+            _namedChanges = filteredChanges.Select(c => new NamedChange
             {
                 Info = _resolver.GetGitObject(c.Item.ServerItem),
                 Change = c,
             });
+
+            if (changeset.Changes.Any() && !_namedChanges.Any())
+                Trace.WriteLine($"Changes in changeset {changeset.ChangesetId} are fully filtered");
         }
 
         private bool? _renameBranchCommmit;
