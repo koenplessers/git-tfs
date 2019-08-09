@@ -597,13 +597,13 @@ namespace GitTfs.VsCommon
         private IEnumerable<MergeInfo> GetMergeInfo(string tfsPathBranchToCreate, string tfsPathParentBranch,
             int firstChangesetInBranchToCreate, int lastChangesetIdToCheck)
         {
-            var mergedItemsToFirstChangesetInBranchToCreate = new List<MergeInfo>();
-            var merges = VersionControl
+            var mergedItemsToFirstChangesetInBranchToCreate = new List<MergeInfo>();             
+            IEnumerable<ExtendedMerge> merges = Retry.Do ( () => VersionControl
                 .TrackMerges(new int[] { firstChangesetInBranchToCreate },
                     new ItemIdentifier(tfsPathBranchToCreate),
                     new ItemIdentifier[] { new ItemIdentifier(tfsPathParentBranch), },
                     null)
-                .OrderByDescending(x => x.SourceChangeset.ChangesetId);
+                .OrderByDescending(x => x.SourceChangeset.ChangesetId));
             MergeInfo lastMerge = null;
             foreach (var extendedMerge in merges)
             {
@@ -703,22 +703,35 @@ namespace GitTfs.VsCommon
 
         public void WithWorkspace(string localDirectory, IGitTfsRemote remote, TfsChangesetInfo versionToFetch, Action<ITfsWorkspace> action)
         {
-            Trace.WriteLine("Setting up a TFS workspace at " + localDirectory);
-            var workspace = Retry.Do(() => GetWorkspace(new WorkingFolder(remote.TfsRepositoryPath, localDirectory)));
-            try
+            Workspace workspace;
+            if (!_workspaces.TryGetValue("tfs2git", out workspace))
             {
-                var tfsWorkspace = _container.With("localDirectory").EqualTo(localDirectory)
-                    .With("remote").EqualTo(remote)
-                    .With("contextVersion").EqualTo(versionToFetch)
-                    .With("workspace").EqualTo(_bridge.Wrap<WrapperForWorkspace, Workspace>(workspace))
-                    .With("tfsHelper").EqualTo(this)
-                    .GetInstance<TfsWorkspace>();
-                action(tfsWorkspace);
+                int i = 1;
+                // choose a short name based on last part of the path where the folder is, but we need to make it unique
+                string baseFolder = localDirectory = Path.Combine(localDirectory, remote.TfsRepositoryPath.Substring(remote.TfsRepositoryPath.LastIndexOf('/') + 1));
+                while (Directory.Exists(localDirectory))
+                    localDirectory = baseFolder + $"-{i++}";
+
+                Trace.WriteLine("Setting up a TFS workspace at " + localDirectory);
+                workspace = Retry.Do(() => GetWorkspace(new WorkingFolder(remote.TfsRepositoryPath, localDirectory)));
+                _workspaces.Add("tfs2git", workspace);
+                Janitor.CleanThisUpWhenWeClose(() => TryToDeleteWorkspace(workspace));
             }
-            finally
-            {
-                TryToDeleteWorkspace(workspace);
-            }
+            else
+                localDirectory = workspace.Folders.First().LocalItem;
+
+            var tfsWorkspace = _container.With("localDirectory").EqualTo(localDirectory)
+                .With("remote").EqualTo(remote)
+                .With("contextVersion").EqualTo(versionToFetch)
+                .With("workspace").EqualTo(_bridge.Wrap<WrapperForWorkspace, Workspace>(workspace))
+                .With("tfsHelper").EqualTo(this)
+                .GetInstance<TfsWorkspace>();
+            action(tfsWorkspace);
+        }
+
+        private Workspace GetWorkspace(string name)
+        {
+            return VersionControl.QueryWorkspaces(name, VersionControl.AuthorizedUser, Environment.MachineName).SingleOrDefault();
         }
 
         private Workspace GetWorkspace(params WorkingFolder[] folders)
@@ -836,6 +849,15 @@ namespace GitTfs.VsCommon
                     }
                 }
             }
+            // now delete workspaces we created 
+            foreach (var ws in _workspaces.Values)
+            {
+                var folders = ws.Folders.Select(f => f.LocalItem).ToList();
+                Trace.TraceInformation("Removing workspace \"" + ws.DisplayName + "\".");
+                ws.Delete();
+                foreach (var f in folders)
+                    System.Threading.Tasks.Task.Run(() => GitTfsRemote.CleanupDirectory(f, true));                    
+            }
         }
         /// <summary>
         /// Method to help improve the process that deletes workspaces used by Git-TFS.
@@ -848,6 +870,9 @@ namespace GitTfs.VsCommon
         /// </remarks>
         private void TryToDeleteWorkspace(Workspace workspace)
         {
+            if (workspace.IsDeleted)
+                return;
+
             //  Try and ensure the client and TFS Server are synchronized.
             workspace.Refresh();
 
@@ -1126,7 +1151,6 @@ namespace GitTfs.VsCommon
             {
                 var temp = new TemporaryFile();
                 _pendingChange.DownloadShelvedFile(temp);
-                _contentLength = new FileInfo(temp).Length;
                 return temp;
             }
 

@@ -214,6 +214,8 @@ namespace GitTfs.Commands
             {
                 Trace.WriteLine("Cleaning...");
                 remote.CleanupWorkspaceDirectory();
+                // doesn't work as it is on parent folder
+                remote.CleanupWorkspace();
 
                 if (remote.Repository.IsBare)
                     remote.Repository.UpdateRef(GitRepository.ShortToLocalName(bareBranch), remote.MaxCommitHash);
