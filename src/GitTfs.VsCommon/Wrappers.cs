@@ -89,9 +89,21 @@ namespace GitTfs.VsCommon
             }
         }
 
+        static System.Globalization.CultureInfo CommentDateFormat = System.Globalization.CultureInfo.CreateSpecificCulture("nl-BE");
+
         public DateTime CreationDate
         {
-            get { return _changeset.CreationDate; }
+            get
+            {
+                if (_changeset.ChangesetId < 185000 && (_changeset.Comment.StartsWith("(") || _changeset.Comment.StartsWith("{")))
+                {
+                    DateTime parsed;
+                    int endPos = _changeset.Comment.IndexOfAny(new char[] { '}', ')', '~' }) - 1;
+                    if (DateTime.TryParse(_changeset.Comment.Substring(1, endPos), CommentDateFormat, System.Globalization.DateTimeStyles.None, out parsed))
+                        return parsed;
+                }
+                return _changeset.CreationDate;
+            }
         }
 
         public string Comment
