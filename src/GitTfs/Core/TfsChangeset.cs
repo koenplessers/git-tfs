@@ -13,21 +13,33 @@ namespace GitTfs.Core
         private readonly ITfsHelper _tfs;
         private readonly IChangeset _changeset;
         private readonly AuthorsFile _authors;
+        private readonly MappingsFile _mappingsFile;
         public TfsChangesetInfo Summary { get; set; }
         public int BaseChangesetId { get; set; }
 
-        public TfsChangeset(ITfsHelper tfs, IChangeset changeset, AuthorsFile authors)
+        public TfsChangeset(ITfsHelper tfs, IChangeset changeset, AuthorsFile authors, MappingsFile mappingsFile)
         {
             _tfs = tfs;
             _changeset = changeset;
             _authors = authors;
+            _mappingsFile = mappingsFile;
             BaseChangesetId = _changeset.Changes.Max(c => c.Item.ChangesetId) - 1;
         }
 
         public LogEntry Apply(string lastCommit, IGitTreeModifier treeBuilder, ITfsWorkspace workspace, IDictionary<string, GitObject> initialTree, Action<Exception> ignorableErrorHandler, FileFilter filters)
         {
             if (initialTree.Empty())
+            {
+                //add mappings to the resolver
+                _mappingsFile.Mappings.ForEach(m =>
+                {
+                    if (!initialTree.ContainsKey(m.TfsPath))
+                        initialTree.Add(m.TfsPath, new GitObject(){ Path = m.LocalPath });
+                });
+
                 Summary.Remote.Repository.GetObjects(lastCommit, initialTree);
+            }
+            
             var remoteRelativeLocalPath = GetPathRelativeToWorkspaceLocalPath(workspace);
             var resolver = new PathResolver(Summary.Remote, remoteRelativeLocalPath, initialTree);
             var sieve = new ChangeSieve(_changeset, resolver, filters);
@@ -96,10 +108,23 @@ namespace GitTfs.Core
         public IEnumerable<TfsTreeEntry> GetFullTree()
         {
             var treeInfo = Summary.Remote.Repository.CreateObjectsDictionary();
+            
+            //add mappings to the resolver
+            _mappingsFile.Mappings.ForEach(m =>
+            {
+                if (!treeInfo.ContainsKey(m.TfsPath))
+                    treeInfo.Add(m.TfsPath, new GitObject() { Path = m.LocalPath });
+            });
+
+
             var resolver = new PathResolver(Summary.Remote, "", treeInfo);
 
             IItem[] tfsItems;
-            if (Summary.Remote.TfsRepositoryPath != null)
+            if (_mappingsFile.Mappings.Count > 0)
+            {
+                tfsItems = _mappingsFile.Mappings.SelectMany(m=> _changeset.VersionControlServer.GetItems(m.TfsPathWithRoot(Summary.Remote.TfsRepositoryPath), _changeset.ChangesetId, TfsRecursionType.Full)).ToArray();
+
+            } else if (Summary.Remote.TfsRepositoryPath != null)
             {
                 tfsItems = _changeset.VersionControlServer.GetItems(Summary.Remote.TfsRepositoryPath, _changeset.ChangesetId, TfsRecursionType.Full);
             }

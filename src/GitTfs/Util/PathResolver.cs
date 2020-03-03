@@ -10,7 +10,7 @@ namespace GitTfs.Util
         private readonly IGitTfsRemote _remote;
         private readonly string _relativePath;
         private readonly IDictionary<string, GitObject> _initialTree;
-
+        
         public PathResolver(IGitTfsRemote remote, string relativePath, IDictionary<string, GitObject> initialTree)
         {
             _remote = remote;
@@ -63,7 +63,7 @@ namespace GitTfs.Util
             {
                 var dirName = splitResult.Groups["dir"].Value;
                 var fileName = splitResult.Groups["file"].Value;
-                fullPath = Lookup(dirName).Path + "/" + fileName;
+                fullPath = (Lookup(dirName).Path + "/" + fileName).TrimStart('/');
             }
             result = new GitObject { Path = fullPath };
             _initialTree[fullPath] = result;

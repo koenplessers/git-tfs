@@ -168,6 +168,8 @@ namespace GitTfs.VsCommon
 
         public IEnumerable<ITfsChangeset> GetChangesets(string path, int startVersion, IGitTfsRemote remote, int lastVersion = -1, bool byLots = false)
         {
+            // TODO: (performance) If mappings then get only the changesets from the specific paths
+            
             if (Is2008OrOlder)
             {
                 foreach (var changeset in GetChangesetsForTfs2008(path, startVersion, remote))
@@ -634,6 +636,7 @@ namespace GitTfs.VsCommon
         protected ITfsChangeset BuildTfsChangeset(Changeset changeset, IGitTfsRemote remote)
         {
             var tfsChangeset = _container.With<ITfsHelper>(this).With<IChangeset>(_bridge.Wrap<WrapperForChangeset, Changeset>(changeset)).GetInstance<TfsChangeset>();
+
             tfsChangeset.Summary = new TfsChangesetInfo { ChangesetId = changeset.ChangesetId, Remote = remote };
 
             if (HasWorkItems(changeset))
@@ -676,26 +679,26 @@ namespace GitTfs.VsCommon
             return result != null && result.Length > 0;
         }
 
-        private readonly Dictionary<string, Workspace> _workspaces = new Dictionary<string, Workspace>();
+        private readonly Dictionary<string, Tuple<Workspace, string>> _workspaces = new Dictionary<string, Tuple<Workspace, string>>();
 
         public void WithWorkspace(string localDirectory, IGitTfsRemote remote, IEnumerable<Tuple<string, string>> mappings, TfsChangesetInfo versionToFetch, Action<ITfsWorkspace> action)
         {
-            Workspace workspace;
+            Tuple<Workspace, string> workspace;
             if (!_workspaces.TryGetValue(remote.Id, out workspace))
             {
                 Trace.WriteLine("Setting up a TFS workspace with subtrees at " + localDirectory);
                 mappings = mappings.ToList(); // avoid iterating through the mappings more than once, and don't retry when this iteration raises an error.
-                _workspaces.Add(remote.Id, workspace = Retry.Do(() =>
+                _workspaces.Add(remote.Id, workspace = new Tuple<Workspace, string>(Retry.Do(() =>
                 {
                     var workingFolders = mappings.Select(x => new WorkingFolder(x.Item1, Path.Combine(localDirectory, x.Item2)));
                     return GetWorkspace(workingFolders.ToArray());
-                }));
-                Janitor.CleanThisUpWhenWeClose(() => TryToDeleteWorkspace(workspace));
+                }), localDirectory));
+                Janitor.CleanThisUpWhenWeClose(() => TryToDeleteWorkspace(workspace.Item1));
             }
             var tfsWorkspace = _container.With("localDirectory").EqualTo(localDirectory)
                 .With("remote").EqualTo(remote)
                 .With("contextVersion").EqualTo(versionToFetch)
-                .With("workspace").EqualTo(_bridge.Wrap<WrapperForWorkspace, Workspace>(workspace))
+                .With("workspace").EqualTo(_bridge.Wrap<WrapperForWorkspace, Workspace>(workspace.Item1))
                 .With("tfsHelper").EqualTo(this)
                 .GetInstance<TfsWorkspace>();
             action(tfsWorkspace);
@@ -703,27 +706,42 @@ namespace GitTfs.VsCommon
 
         public void WithWorkspace(string localDirectory, IGitTfsRemote remote, TfsChangesetInfo versionToFetch, Action<ITfsWorkspace> action)
         {
-            Workspace workspace;
-            if (!_workspaces.TryGetValue("tfs2git", out workspace))
+            
+            Tuple<Workspace, string> workspace;
+            if (!_workspaces.TryGetValue(remote.TfsRepositoryPath, out workspace))
             {
-                int i = 1;
+                var i = 1;
                 // choose a short name based on last part of the path where the folder is, but we need to make it unique
-                string baseFolder = localDirectory = Path.Combine(localDirectory, remote.TfsRepositoryPath.Substring(remote.TfsRepositoryPath.LastIndexOf('/') + 1));
+                var baseFolder = localDirectory = Path.Combine(localDirectory, remote.TfsRepositoryPath.Substring(remote.TfsRepositoryPath.LastIndexOf('/') + 1));
                 while (Directory.Exists(localDirectory))
                     localDirectory = baseFolder + $"-{i++}";
 
-                Trace.WriteLine("Setting up a TFS workspace at " + localDirectory);
-                workspace = Retry.Do(() => GetWorkspace(new WorkingFolder(remote.TfsRepositoryPath, localDirectory)));
-                _workspaces.Add("tfs2git", workspace);
-                Janitor.CleanThisUpWhenWeClose(() => TryToDeleteWorkspace(workspace));
-            }
-            else
-                localDirectory = workspace.Folders.First().LocalItem;
+                Trace.WriteLine($"Setting up a TFS workspace {remote.TfsRepositoryPath} => {localDirectory}");
+                
+                //add mappings to workplace
+                List<WorkingFolder> folders = null;
+                if (_container.GetInstance<MappingsFile>().Mappings.Count > 0)
+                    folders = _container
+                                    .GetInstance<MappingsFile>()
+                                    .Mappings
+                                    .Select(m => new WorkingFolder(
+                                        m.TfsPathWithRoot(remote.TfsRepositoryPath),
+                                        m.LocalPathWithRoot(localDirectory),
+                                        WorkingFolderType.Map))
+                                    .ToList();
+                else
+                    folders = new List<WorkingFolder>() {new WorkingFolder(remote.TfsRepositoryPath, localDirectory)};
+                
 
-            var tfsWorkspace = _container.With("localDirectory").EqualTo(localDirectory)
+                workspace = new Tuple<Workspace, string>(Retry.Do(() => GetWorkspace(folders.ToArray())), localDirectory);
+                _workspaces.Add(remote.TfsRepositoryPath, workspace);
+                Janitor.CleanThisUpWhenWeClose(() => TryToDeleteWorkspace(workspace.Item1));
+            }
+          
+            var tfsWorkspace = _container.With("localDirectory").EqualTo(workspace.Item2)
                 .With("remote").EqualTo(remote)
                 .With("contextVersion").EqualTo(versionToFetch)
-                .With("workspace").EqualTo(_bridge.Wrap<WrapperForWorkspace, Workspace>(workspace))
+                .With("workspace").EqualTo(_bridge.Wrap<WrapperForWorkspace, Workspace>(workspace.Item1))
                 .With("tfsHelper").EqualTo(this)
                 .GetInstance<TfsWorkspace>();
             action(tfsWorkspace);
@@ -852,12 +870,20 @@ namespace GitTfs.VsCommon
             // now delete workspaces we created 
             foreach (var ws in _workspaces.Values)
             {
-                var folders = ws.Folders.Select(f => f.LocalItem).ToList();
-                Trace.TraceInformation("Removing workspace \"" + ws.DisplayName + "\".");
-                ws.Delete();
-                foreach (var f in folders)
-                    System.Threading.Tasks.Task.Run(() => GitTfsRemote.CleanupDirectory(f, true));                    
+                var folders = ws.Item1.Folders.Select(f => f.LocalItem).ToList();
+                Trace.TraceInformation("Removing workspace \"" + ws.Item1.DisplayName + "\".");
+                ws.Item1.Delete();
+                if (ws.Item2 == null)
+                {
+                    foreach (var f in folders)
+                        System.Threading.Tasks.Task.Run(() => GitTfsRemote.CleanupDirectory(f, true));
+                }
+                else
+                {
+                    System.Threading.Tasks.Task.Run(() => GitTfsRemote.CleanupDirectory(ws.Item2, true));
+                }
             }
+            _workspaces.Clear();
         }
         /// <summary>
         /// Method to help improve the process that deletes workspaces used by Git-TFS.
@@ -918,7 +944,7 @@ namespace GitTfs.VsCommon
                 _bridge.Wrap<WrapperForVersionControlServer, VersionControlServer>(VersionControl);
             // TODO - containerify this (no `new`)!
             var fakeChangeset = new Unshelveable(shelveset, change, wrapperForVersionControlServer, _bridge);
-            var tfsChangeset = new TfsChangeset(remote.Tfs, fakeChangeset, null) { Summary = new TfsChangesetInfo { Remote = remote } };
+            var tfsChangeset = new TfsChangeset(remote.Tfs, fakeChangeset, null, null) { Summary = new TfsChangesetInfo { Remote = remote } };
             return tfsChangeset;
         }
 

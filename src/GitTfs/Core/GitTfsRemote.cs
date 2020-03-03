@@ -18,6 +18,7 @@ namespace GitTfs.Core
         private readonly Globals _globals;
         private readonly RemoteOptions _remoteOptions;
         private readonly ConfigProperties _properties;
+        private MappingsFile _mappingsFile;
         private int? firstChangesetId;
         private int? maxChangesetId;
         private string maxCommitHash;
@@ -25,12 +26,13 @@ namespace GitTfs.Core
         public RemoteInfo RemoteInfo { get; private set; }
 
         public GitTfsRemote(RemoteInfo info, IGitRepository repository, RemoteOptions remoteOptions, Globals globals,
-            ITfsHelper tfsHelper, ConfigProperties properties)
+            ITfsHelper tfsHelper, ConfigProperties properties, MappingsFile mappingsFile)
         {
             _remoteOptions = remoteOptions;
             _globals = globals;
             _properties = properties;
             Tfs = tfsHelper;
+            _mappingsFile = mappingsFile;
             Repository = repository;
 
             RemoteInfo = info;
@@ -744,6 +746,9 @@ namespace GitTfs.Core
 
         private IEnumerable<ITfsChangeset> FetchChangesets(bool byLots, int lastVersion = -1)
         {
+            // TODO: (performance) If mappings then fetch only the changesets from the specific
+            // paths and not from the whole trunk 
+
             int lowerBoundChangesetId;
 
             // If we're starting at the Root side of a branch commit (e.g. C1), but there ar
@@ -842,12 +847,16 @@ namespace GitTfs.Core
                 if (m_Filters == null)
                 {
                     m_Filters = new FileFilter ();
+                    m_Filters.WhiteListPaths = new List<string>();
+
                     string blackListFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "blacklistedfolders.txt");
                     if (File.Exists(blackListFile))
                         m_Filters.BlackListPaths = new List<string> (File.ReadAllLines(blackListFile).Select(l => (TfsRepositoryPath + '/' + l).ToLower()));
                     string whiteListFile = Path.Combine (AppDomain.CurrentDomain.BaseDirectory, "whitelistedfolders.txt");
                     if (File.Exists (whiteListFile))
-                        m_Filters.WhiteListPaths = new List<string> (File.ReadAllLines (whiteListFile).Select (l => (TfsRepositoryPath + '/' + l).ToLower ()));
+                        m_Filters.WhiteListPaths.AddRange(File.ReadAllLines (whiteListFile).Select (l => (TfsRepositoryPath + '/' + l).ToLower ()));
+
+                    m_Filters.WhiteListPaths.AddRange(_mappingsFile.Mappings.Select(m => m.TfsPathWithRoot(TfsRepositoryPath).ToLower()));
                 }
                 return m_Filters;
             }
