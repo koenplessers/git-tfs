@@ -21,9 +21,11 @@ namespace GitTfs
         private readonly Globals _globals;
         private readonly Bootstrapper _bootstrapper;
         private readonly AuthorsFile _authorsFileHelper;
+        private readonly MappingsFile _mappingsFileHelper;
 
         public GitTfs(GitTfsCommandFactory commandFactory, IHelpHelper help, IContainer container,
-            IGitTfsVersionProvider gitTfsVersionProvider, GitTfsCommandRunner runner, Globals globals, Bootstrapper bootstrapper, AuthorsFile authorsFileHelper)
+            IGitTfsVersionProvider gitTfsVersionProvider, GitTfsCommandRunner runner, Globals globals, Bootstrapper bootstrapper, AuthorsFile authorsFileHelper,
+            MappingsFile mappingsFileHelper)
         {
             _commandFactory = commandFactory;
             _help = help;
@@ -33,6 +35,7 @@ namespace GitTfs
             _globals = globals;
             _bootstrapper = bootstrapper;
             _authorsFileHelper = authorsFileHelper;
+            _mappingsFileHelper = mappingsFileHelper;
         }
 
         public int Run(IList<string> args)
@@ -46,10 +49,13 @@ namespace GitTfs
             if (RequiresValidGitRepository(command)) AssertValidGitRepository();
             bool willCreateRepository = command.GetType() == typeof(Clone) || command.GetType() == typeof(Init);
             ParseAuthorsAndSave(!willCreateRepository);
+            ParseMappingsAndSave(!willCreateRepository);
             var exitCode = Main(command, unparsedArgs);
             if (willCreateRepository)
             {
                 _authorsFileHelper.SaveAuthorFileInRepository(_globals.AuthorsFilePath, _globals.GitDir);
+					 _mappingsFileHelper.SaveMappingFileInRepository(_globals.MappingFilePath, _globals.GitDir);
+                
             }
             return exitCode;
         }
@@ -108,6 +114,23 @@ namespace GitTfs
                 Trace.TraceWarning("         Verify the file :" + Path.Combine(_globals.GitDir, AuthorsFile.GitTfsCachedAuthorsFileName));
             }
         }
+
+        private void ParseMappingsAndSave(bool couldSaveAuthorFile)
+        {
+            try
+            {
+                _container.GetInstance<MappingsFile>().Parse(_globals.MappingFilePath, _globals.GitDir, couldSaveAuthorFile);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine("Error when parsing mapping file:" + ex);
+                if (!string.IsNullOrEmpty(_globals.MappingFilePath))
+                    throw;
+                Trace.TraceWarning("warning: mapping file ignored due to a problem occuring when reading it :\n\t" + ex.Message);
+                Trace.TraceWarning("         Verify the file :" + Path.Combine(_globals.GitDir, MappingsFile.GitTfsCachedMappingFileName));
+            }
+        }
+
 
         public void InitializeGlobals()
         {

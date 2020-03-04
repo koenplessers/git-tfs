@@ -27,10 +27,12 @@ namespace GitTfs
                         v => UserSpecifiedRemoteId = v },
                     { "A|authors=", "Path to an Authors file to map TFS users to Git users (will be kept in cache and used for all the following commands)",
                         v => AuthorsFilePath = v },
+                    { "M|mapping=", "Path to a mapping file; a txt file in each line 2 paths separated by semicolon (;). The first path is the relative path in the TFS trunk and the second path the intended path in the target git repository",
+                        v => MappingFilePath = v },
                 };
             }
         }
-
+        public string MappingFilePath { get; set; }
         public string AuthorsFilePath { get; set; }
         public bool ShowHelp { get; set; }
         public bool ShowVersion { get; set; }
